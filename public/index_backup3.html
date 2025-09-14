@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Price Viewer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --primary-color: #4361ee;
+      --secondary-color: #3a0ca3;
+      --accent-color: #f72585;
+      --text-color: #2b2d42;
+      --bg-color: #f8f9fa;
+      --card-bg: #ffffff;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+    }
+    
+    h1 {
+      color: var(--secondary-color);
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      align-items: center;
+    }
+    
+    input {
+      padding: 10px 15px;
+      font-size: 16px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      flex-grow: 1;
+    }
+    
+    button {
+      padding: 10px 20px;
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s;
+    }
+    
+    button:hover {
+      background-color: var(--secondary-color);
+    }
+    
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    
+    .chart-container {
+      margin-top: 30px;
+      background-color: var(--card-bg);
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    #chartError {
+      color: #d90429;
+      margin-top: 15px;
+      padding: 10px;
+      background-color: #ffd6d6;
+      border-radius: 4px;
+    }
+    
+    select {
+      padding: 8px 12px;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+  <h1>Stock Price Viewer</h1>
+  <div>
+    <input type="text" id="symbolInput" placeholder="Enter stock symbol (e.g. TSLA)">
+    <button id="fetchBtn">Get Stock Data</button>
+  </div>
+  <div style="margin-top: 15px;">
+    <label for="dateRange">Date Range: </label>
+    <select id="dateRange">
+      <option value="30">Last 30 Days</option>
+      <option value="90">Last 90 Days</option>
+      <option value="180">Last 6 Months</option>
+      <option value="365">Last Year</option>
+      <option value="0">All Data</option>
+    </select>
+  </div>
+  <div class="chart-container">
+    <canvas id="stockChart"></canvas>
+    <p id="chartError" style="color: red; margin-top: 10px;"></p>
+  </div>
+
+  <script>
+    const ctx = document.getElementById('stockChart').getContext('2d');
+    let stockChart;
+
+    // Cache stock data in localStorage
+    function getCachedStockData(symbol) {
+      const cached = localStorage.getItem(`stockData_${symbol}`);
+      return cached ? JSON.parse(cached) : null;
+    }
+
+    function cacheStockData(symbol, data) {
+      localStorage.setItem(`stockData_${symbol}`, JSON.stringify({
+        data,
+        timestamp: new Date().getTime()
+      }));
+    }
+
+    function isCacheValid(cachedData, maxAgeHours = 24) {
+      if (!cachedData || !cachedData.timestamp) return false;
+      const ageHours = (new Date().getTime() - cachedData.timestamp) / (1000 * 60 * 60);
+      return ageHours < maxAgeHours;
+    }
+
+    document.getElementById('fetchBtn').addEventListener('click', async () => {
+      const symbol = document.getElementById('symbolInput').value.trim().toUpperCase();
+      if (!symbol) return alert('Please enter a stock symbol');
+      
+      try {
+        // Show loading state
+        const btn = document.getElementById('fetchBtn');
+        btn.disabled = true;
+        btn.textContent = 'Loading...';
+
+        // Check cache first
+        const cachedData = getCachedStockData(symbol);
+        if (cachedData && isCacheValid(cachedData)) {
+          console.log('Using cached data for:', symbol);
+          updateChart(cachedData.data);
+          document.getElementById('chartError').textContent = '';
+          btn.disabled = false;
+          btn.textContent = 'Get Stock Data';
+          return;
+        }
+
+        console.log('Fetching fresh data for:', symbol);
+        const response = await fetch(`/api/stock/${symbol}`);
+        if (!response.ok) {
+          if (response.status === 429) {
+            throw new Error('Please wait 1 minute between requests (API limit)');
+          }
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        // Add delay to prevent rapid consecutive requests
+        await new Promise(resolve => setTimeout(resolve, 15000));
+        
+        const result = await response.json();
+        console.log('Raw API Response:', result);
+        
+        // Validate response structure
+        if (!result || typeof result !== 'object') {
+          throw new Error('Invalid API response format');
+        }
+        
+        const data = result.data || result;
+        console.log('Processing data:', data);
+        
+        // Validate required fields
+        if (!data.symbol || typeof data.symbol !== 'string') {
+          throw new Error('Missing or invalid symbol in response');
+        }
+        
+        if (!data.closingPrices || !Array.isArray(data.closingPrices)) {
+          console.error('Invalid closingPrices:', data.closingPrices);
+          throw new Error('Missing or invalid closingPrices array');
+        }
+        
+        // Validate each price point
+        const invalidPrices = data.closingPrices.filter(price => 
+          !price || typeof price.date !== 'string' || isNaN(price.close)
+        );
+        
+        if (invalidPrices.length > 0) {
+          console.error('Invalid price points:', invalidPrices.slice(0, 3));
+          throw new Error(`Found ${invalidPrices.length} invalid price points`);
+        }
+        
+        console.log('Data validation passed');
+        
+        if (!data || !data.closingPrices || !Array.isArray(data.closingPrices)) {
+          console.error('Invalid data structure - closingPrices:', data?.closingPrices);
+          throw new Error(data?.error || 'Invalid data format from server');
+        }
+
+        if (!data.symbol || typeof data.symbol !== 'string') {
+          console.error('Invalid symbol in response:', data?.symbol);
+          throw new Error('Invalid symbol in response');
+        }
+
+        // Validate closing prices structure
+        const invalidItems = data.closingPrices.filter(item => 
+          !item.date || !item.close || isNaN(item.close)
+        );
+        if (invalidItems.length > 0) {
+          console.error('Invalid price data items:', invalidItems.slice(0, 3));
+          throw new Error(`Found ${invalidItems.length} invalid data points`);
+        }
+
+        console.log('API response:', data);
+        if (!data.closingPrices || !Array.isArray(data.closingPrices)) {
+          throw new Error('Invalid data format: missing closingPrices array');
+        }
+        updateChart(data);
+        cacheStockData(symbol, data);
+        document.getElementById('chartError').textContent = '';
+      } catch (error) {
+        console.error('Error:', error);
+        document.getElementById('chartError').textContent = error.message;
+        if (stockChart) {
+          stockChart.destroy();
+          stockChart = null;
+        }
+      } finally {
+        const btn = document.getElementById('fetchBtn');
+        btn.disabled = false;
+        btn.textContent = 'Get Stock Data';
+      }
+      });
+    });
+
+    function calculateSMA(prices, dates, windowSize = 20) {
+      const sma = [];
+      for (let i = windowSize - 1; i < prices.length; i++) {
+        const sum = prices.slice(i - windowSize + 1, i + 1).reduce((a, b) => a + b, 0);
+        sma.push({ date: dates[i], value: sum / windowSize });
+      }
+      return sma;
+    }
+
+    function calculateBollingerBands(prices, dates, window = 20, multiplier = 2) {
+      const bands = { upper: [], middle: [], lower: [] };
+      for (let i = window - 1; i < prices.length; i++) {
+        const slice = prices.slice(i - window + 1, i + 1);
+        const mean = slice.reduce((a, b) => a + b, 0) / window;
+        const stdDev = Math.sqrt(slice.reduce((sq, n) => sq + Math.pow(n - mean, 2), 0) / window);
+        
+        bands.middle.push({ date: dates[i], value: mean });
+        bands.upper.push({ date: dates[i], value: mean + multiplier * stdDev });
+        bands.lower.push({ date: dates[i], value: mean - multiplier * stdDev });
+      }
+      return bands;
+    }
+
+    function updateChart(data) {
+      console.log('Chart data received:', data);
+      
+      try {
+        // Verify data structure
+        if (!data || !data.closingPrices || !Array.isArray(data.closingPrices)) {
+          throw new Error('Invalid chart data format');
+        }
+
+        // Get date range selection
+        const dateRange = parseInt(document.getElementById('dateRange').value) || 90;
+        const maxPoints = Math.min(250, data.closingPrices.length);
+        const chartData = dateRange > 0 
+          ? data.closingPrices.slice(-Math.min(dateRange, maxPoints))
+          : data.closingPrices.slice(-maxPoints);
+
+        console.log(`Rendering ${chartData.length} data points`);
+        
+        const dates = chartData.map(item => item.date);
+        const closes = chartData.map(item => item.close);
+
+        // Clear previous chart
+        if (stockChart) stockChart.destroy();
+
+        // Create basic chart first
+        stockChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: dates,
+            datasets: [{
+              label: `${data.symbol} Closing Price`,
+              data: closes,
+              borderColor: 'rgb(75, 192, 192)',
+              tension: 0.1
+            }]
+          },
+          options: {
+            responsive: true,
+            scales: {
+              x: { title: { display: true, text: 'Date' } },
+              y: { title: { display: true, text: 'Price ($)' } }
+            }
+          }
+        });
+
+        // Add technical indicators
+        const sma20 = calculateSMA(closes, dates, 20);
+        const sma50 = calculateSMA(closes, dates, 50);
+        const bollingerBands = calculateBollingerBands(closes, dates);
+        
+        stockChart.data.datasets.push(
+          {
+            label: '20-Day SMA',
+            data: [...Array(dates.length - sma20.length).fill(null), ...sma20.map(item => item.value)],
+            borderColor: 'rgb(255, 99, 132)',
+            tension: 0.1,
+            borderDash: [5, 5]
+          },
+          {
+            label: '50-Day SMA',
+            data: [...Array(dates.length - sma50.length).fill(null), ...sma50.map(item => item.value)],
+            borderColor: 'rgb(54, 162, 235)',
+            tension: 0.1,
+            borderDash: [5, 5]
+          },
+          {
+            label: 'Bollinger Upper Band',
+            data: [...Array(dates.length - bollingerBands.upper.length).fill(null), 
+                  ...bollingerBands.upper.map(item => item.value)],
+            borderColor: 'rgb(153, 102, 255)',
+            backgroundColor: 'rgba(153, 102, 255, 0.1)',
+            tension: 0.1,
+            fill: '+1'
+          },
+          {
+            label: 'Bollinger Lower Band',
+            data: [...Array(dates.length - bollingerBands.lower.length).fill(null), 
+                  ...bollingerBands.lower.map(item => item.value)],
+            borderColor: 'rgb(153, 102, 255)',
+            backgroundColor: 'rgba(153, 102, 255, 0.1)',
+            tension: 0.1,
+            fill: '-1'
+          }
+        );
+        stockChart.update();
+
+      } catch (error) {
+        console.error('Chart error:', error);
+        document.getElementById('chartError').textContent = `Chart error: ${error.message}`;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Price Viewer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --primary-color: #4361ee;
+      --secondary-color: #3a0ca3;
+      --accent-color: #f72585;
+      --text-color: #2b2d42;
+      --bg-color: #f8f9fa;
+      --card-bg: #ffffff;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+    }
+    
+    h1 {
+      color: var(--secondary-color);
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      align-items: center;
+    }
+    
+    input {
+      padding: 10px 15px;
+      font-size: 16px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      flex-grow: 1;
+    }
+    
+    button {
+      padding: 10px 20px;
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s;
+    }
+    
+    button:hover {
+      background-color: var(--secondary-color);
+    }
+    
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    
+    .chart-container {
+      margin-top: 30px;
+      background-color: var(--card-bg);
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      position: relative;
+      height: 60vh;
+      min-height: 500px;
+    }
+    
+    @media (max-width: 768px) {
+      .chart-container {
+        height: 50vh;
+        min-height: 400px;
+      }
+    }
+    
+    #chartError {
+      color: #d90429;
+      margin-top: 15px;
+      padding: 10px;
+      background-color: #ffd6d6;
+      border-radius: 4px;
+    }
+    
+    select {
+      padding: 8px 12px;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+    }
+  </style>
+</head>
+<body>
+  <h1>Stock Price Viewer</h1>
+  <div>
+    <select id="symbolInput">
+      <option value="">Select S&P 500 Stock</option>
+      <!-- Top 20 S&P 500 stocks by market cap -->
+      <option value="AAPL">Apple (AAPL)</option>
+      <option value="MSFT">Microsoft (MSFT)</option>
+      <option value="AMZN">Amazon (AMZN)</option>
+      <option value="NVDA">NVIDIA (NVDA)</option>
+      <option value="GOOGL">Alphabet (GOOGL)</option>
+      <option value="META">Meta (META)</option>
+      <option value="TSLA">Tesla (TSLA)</option>
+      <option value="BRK.B">Berkshire Hathaway (BRK.B)</option>
+      <option value="JPM">JPMorgan Chase (JPM)</option>
+      <option value="V">Visa (V)</option>
+      <option value="JNJ">Johnson & Johnson (JNJ)</option>
+      <option value="WMT">Walmart (WMT)</option>
+      <option value="PG">Procter & Gamble (PG)</option>
+      <option value="MA">Mastercard (MA)</option>
+      <option value="HD">Home Depot (HD)</option>
+      <option value="CVX">Chevron (CVX)</option>
+      <option value="LLY">Eli Lilly (LLY)</option>
+      <option value="AVGO">Broadcom (AVGO)</option>
+      <option value="PEP">PepsiCo (PEP)</option>
+      <option value="COST">Costco (COST)</option>
+    </select>
+    <button id="fetchBtn">Get Stock Data</button>
+  </div>
+  <div style="margin-top: 15px;">
+    <label for="dateRange">Date Range: </label>
+    <select id="dateRange">
+      <option value="30">Last 30 Days</option>
+      <option value="90">Last 90 Days</option>
+      <option value="180">Last 6 Months</option>
+      <option value="365">Last Year</option>
+      <option value="0">All Data</option>
+    </select>
+  </div>
+  <div class="chart-container">
+    <canvas id="stockChart"></canvas>
+    <p id="chartError" style="color: red; margin-top: 10px;"></p>
+    <p id="rateLimitInfo" style="color: #666; font-size: 0.9em; margin-top: 5px;"></p>
+  </div>
+  <div class="chart-container" style="height: 30vh; min-height: 200px; margin-top: 20px;">
+    <canvas id="rsiChart"></canvas>
+  </div>
+
+  <script>
+    const priceCtx = document.getElementById('stockChart').getContext('2d');
+    const rsiCtx = document.getElementById('rsiChart').getContext('2d');
+    let stockChart;
+    let rsiChart;
+
+    // Cache stock data in localStorage
+    function getCachedStockData(symbol) {
+      const cached = localStorage.getItem(`stockData_${symbol}`);
+      return cached ? JSON.parse(cached) : null;
+    }
+
+    function cacheStockData(symbol, data) {
+      localStorage.setItem(`stockData_${symbol}`, JSON.stringify({
+        data,
+        timestamp: new Date().getTime()
+      }));
+    }
+
+    function isCacheValid(cachedData, maxAgeHours = 48) {
+      if (!cachedData || !cachedData.timestamp) return false;
+      const ageHours = (new Date().getTime() - cachedData.timestamp) / (1000 * 60 * 60);
+      return ageHours < maxAgeHours;
+    }
+
+    document.getElementById('fetchBtn').addEventListener('click', async () => {
+      const symbol = document.getElementById('symbolInput').value;
+      if (!symbol) return alert('Please select a stock from the list');
+      
+      try {
+        // Show loading state
+        const btn = document.getElementById('fetchBtn');
+        btn.disabled = true;
+        btn.textContent = 'Loading...';
+
+        // Check cache first - exit early if valid cache exists
+        const cachedData = getCachedStockData(symbol);
+        if (cachedData && isCacheValid(cachedData)) {
+          console.log('Using cached data for:', symbol);
+          updateChart(cachedData.data);
+          document.getElementById('chartError').textContent = '';
+          document.getElementById('rateLimitInfo').textContent = 'Using cached data (last updated: ' + 
+            new Date(cachedData.timestamp).toLocaleString() + ')';
+          document.getElementById('rateLimitInfo').style.color = '#28a745';
+          btn.disabled = false;
+          btn.textContent = 'Get Stock Data';
+          return;
+        }
+
+        // Only proceed to API call if no valid cache
+        console.log('No valid cache - fetching fresh data for:', symbol);
+        const response = await fetch(`/api/stock/${symbol}`);
+        if (!response.ok) {
+          if (response.status === 429 || response.status === 400) {
+            throw new Error('API limit reached (5 requests/minute max). Please wait 1 minute before trying again.');
+          }
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        // Show rate limit info
+        const remaining = response.headers.get('X-RateLimit-Remaining');
+        const reset = response.headers.get('X-RateLimit-Reset');
+        if (remaining && reset) {
+          const resetTime = new Date(parseInt(reset) * 1000);
+          console.log(`API calls remaining: ${remaining}, resets at: ${resetTime.toLocaleTimeString()}`);
+          document.getElementById('rateLimitInfo').textContent = 
+            `API calls left: ${remaining} (resets at ${resetTime.toLocaleTimeString()})`;
+        }
+
+        // Add delay to prevent rapid consecutive requests
+        await new Promise(resolve => setTimeout(resolve, 15000));
+        
+        const responseText = await response.text();
+        console.log('Raw API response text:', responseText);
+        
+        let result;
+        try {
+          result = JSON.parse(responseText);
+        } catch (error) {
+          console.error('Failed to parse JSON:', error);
+          throw new Error('Invalid JSON response from server');
+        }
+        
+        console.log('Parsed API response:', result);
+        
+        // Validate response structure
+        if (!result || typeof result !== 'object') {
+          throw new Error('Invalid API response format');
+        }
+        
+        const data = result.data || result;
+        console.log('Processing data:', data);
+        
+        // Validate required fields
+        if (!data.symbol || typeof data.symbol !== 'string') {
+          throw new Error('Missing or invalid symbol in response');
+        }
+        
+        if (!data.closingPrices || !Array.isArray(data.closingPrices)) {
+          console.error('Invalid closingPrices:', data.closingPrices);
+          throw new Error('Missing or invalid closingPrices array');
+        }
+        
+        // Validate each price point
+        const invalidPrices = data.closingPrices.filter(price => 
+          !price || typeof price.date !== 'string' || isNaN(price.close)
+        );
+        
+        if (invalidPrices.length > 0) {
+          console.error('Invalid price points:', invalidPrices.slice(0, 3));
+          throw new Error(`Found ${invalidPrices.length} invalid price points`);
+        }
+        
+        console.log('Data validation passed');
+        
+        if (!data || !data.closingPrices || !Array.isArray(data.closingPrices)) {
+          console.error('Invalid data structure - closingPrices:', data?.closingPrices);
+          throw new Error(data?.error || 'Invalid data format from server');
+        }
+
+        if (!data.symbol || typeof data.symbol !== 'string') {
+          console.error('Invalid symbol in response:', data?.symbol);
+          throw new Error('Invalid symbol in response');
+        }
+
+        // Validate closing prices structure
+        const invalidItems = data.closingPrices.filter(item => 
+          !item.date || !item.close || isNaN(item.close)
+        );
+        if (invalidItems.length > 0) {
+          console.error('Invalid price data items:', invalidItems.slice(0, 3));
+          throw new Error(`Found ${invalidItems.length} invalid data points`);
+        }
+
+        console.log('API response:', data);
+        if (!data.closingPrices || !Array.isArray(data.closingPrices)) {
+          throw new Error('Invalid data format: missing closingPrices array');
+        }
+        updateChart(data);
+        cacheStockData(symbol, data);
+        document.getElementById('chartError').textContent = '';
+      } catch (error) {
+        console.error('Error:', error);
+        document.getElementById('chartError').textContent = error.message;
+        if (stockChart) {
+          stockChart.destroy();
+          stockChart = null;
+        }
+      } finally {
+        const btn = document.getElementById('fetchBtn');
+        btn.disabled = false;
+        btn.textContent = 'Get Stock Data';
+      }
+    });
+
+    function calculateSMA(prices, dates, windowSize = 20) {
+      const sma = [];
+      for (let i = windowSize - 1; i < prices.length; i++) {
+        const sum = prices.slice(i - windowSize + 1, i + 1).reduce((a, b) => a + b, 0);
+        sma.push({ date: dates[i], value: sum / windowSize });
+      }
+      return sma;
+    }
+
+    function calculateRSI(prices, window = 14) {
+      const rsi = [];
+      let avgGain = 0;
+      let avgLoss = 0;
+      
+      // Calculate initial average gains/losses
+      for (let i = 1; i <= window; i++) {
+        const change = prices[i] - prices[i-1];
+        if (change > 0) {
+          avgGain += change;
+        } else {
+          avgLoss += Math.abs(change);
+        }
+      }
+      avgGain /= window;
+      avgLoss /= window;
+      
+      // Calculate subsequent RSI values
+      for (let i = window + 1; i < prices.length; i++) {
+        const change = prices[i] - prices[i-1];
+        let currentGain = 0;
+        let currentLoss = 0;
+        
+        if (change > 0) {
+          currentGain = change;
+        } else {
+          currentLoss = Math.abs(change);
+        }
+        
+        avgGain = (avgGain * (window - 1) + currentGain) / window;
+        avgLoss = (avgLoss * (window - 1) + currentLoss) / window;
+        
+        const relativeStrength = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        rsi.push(100 - (100 / (1 + relativeStrength)));
+      }
+      
+      return rsi;
+    }
+
+    function updateChart(data) {
+      console.log('Chart data received:', JSON.stringify(data, null, 2));
+      
+      try {
+        // Verify data structure
+        if (!data || !data.closingPrices || !Array.isArray(data.closingPrices)) {
+          throw new Error('Invalid chart data format - missing closingPrices array');
+        }
+
+        // Validate price data
+        const validPrices = data.closingPrices.filter(item => 
+          item && item.date && !isNaN(item.close)
+        );
+        
+        if (validPrices.length === 0) {
+          throw new Error('No valid price data found');
+        }
+
+        // Get date range selection
+        const dateRange = parseInt(document.getElementById('dateRange').value) || 90;
+        const maxPoints = Math.min(250, validPrices.length);
+        const chartData = dateRange > 0 
+          ? validPrices.slice(-Math.min(dateRange, maxPoints))
+          : validPrices.slice(-maxPoints);
+
+        console.log(`Rendering ${chartData.length} valid data points`);
+        console.log('Sample data:', chartData.slice(0, 3));
+        
+        const dates = chartData.map(item => item.date);
+        const closes = chartData.map(item => item.close);
+
+        // Clear previous chart
+        if (stockChart) stockChart.destroy();
+
+        // Create basic chart first
+        stockChart = new Chart(priceCtx, {
+          type: 'line',
+          data: {
+            labels: dates,
+            datasets: [{
+              label: `${data.symbol} Closing Price`,
+              data: closes,
+              borderColor: 'rgb(54, 162, 235)',
+              tension: 0.1
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+              legend: {
+                position: 'top',
+                labels: {
+                  font: {
+                    size: 14,
+                    family: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+                  },
+                  padding: 20,
+                  usePointStyle: true
+                }
+              },
+              tooltip: {
+                mode: 'index',
+                intersect: false,
+                backgroundColor: 'rgba(0,0,0,0.8)',
+                titleFont: {
+                  size: 16
+                },
+                bodyFont: {
+                  size: 14
+                },
+                padding: 12,
+                cornerRadius: 6
+              }
+            },
+            scales: {
+              x: {
+                title: { 
+                  display: true, 
+                  text: 'Date',
+                  font: {
+                    size: 14,
+                    weight: 'bold',
+                    family: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+                  },
+                  color: '#2b2d42'
+                },
+                grid: {
+                  display: false,
+                  drawBorder: true
+                },
+                ticks: {
+                  font: {
+                    size: 12
+                  }
+                }
+              },
+              y: {
+                title: { 
+                  display: true, 
+                  text: 'Price ($)',
+                  font: {
+                    size: 14,
+                    weight: 'bold',
+                    family: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif"
+                  },
+                  color: '#2b2d42'
+                },
+                grid: {
+                  color: 'rgba(0,0,0,0.05)',
+                  drawBorder: true
+                },
+                ticks: {
+                  font: {
+                    size: 12
+                  },
+                  callback: function(value) {
+                    return '$' + value.toFixed(2);
+                  }
+                }
+              },
+
+            },
+            interaction: {
+              mode: 'nearest',
+              axis: 'x',
+              intersect: false
+            },
+            elements: {
+              point: {
+                radius: 0,
+                hoverRadius: 6
+              },
+              line: {
+                borderWidth: 2,
+                tension: 0.1
+              }
+            }
+          }
+        });
+
+        // Add technical indicators
+        const sma20 = calculateSMA(closes, dates, 20);
+        const sma50 = calculateSMA(closes, dates, 50);
+        const rsiValues = calculateRSI(closes);
+        const rsiDates = dates.slice(14); // RSI starts after first 14 periods
+        
+        // Update price chart (without RSI)
+        stockChart.data.datasets.push(
+          {
+            label: '20-Day SMA',
+            data: [...Array(dates.length - sma20.length).fill(null), ...sma20.map(item => item.value)],
+            borderColor: 'rgb(255, 99, 132)',
+            tension: 0.1,
+            borderDash: [5, 5]
+          },
+          {
+            label: '50-Day SMA',
+            data: [...Array(dates.length - sma50.length).fill(null), ...sma50.map(item => item.value)],
+            borderColor: 'rgb(34, 139, 34)',
+            tension: 0.1,
+            borderDash: [5, 5]
+          }
+        );
+        stockChart.update();
+
+        // Create RSI chart
+        if (rsiChart) rsiChart.destroy();
+        rsiChart = new Chart(rsiCtx, {
+          type: 'line',
+          data: {
+            labels: rsiDates,
+            datasets: [{
+              label: 'RSI (14)',
+              data: rsiValues,
+              borderColor: 'rgb(128, 0, 128)',
+              borderWidth: 2,
+              pointRadius: 0
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'top'
+              },
+              tooltip: {
+                mode: 'index',
+                intersect: false
+              }
+            },
+            scales: {
+              x: {
+                grid: {
+                  display: false
+                },
+                ticks: {
+                  font: {
+                    size: 12
+                  }
+                }
+              },
+              y: {
+                min: 0,
+                max: 100,
+                ticks: {
+                  stepSize: 20,
+                  callback: function(value) {
+                    return value;
+                  }
+                },
+                grid: {
+                  color: 'rgba(0,0,0,0.05)'
+                }
+              }
+            },
+            elements: {
+              point: {
+                radius: 0,
+                hoverRadius: 6
+              }
+            }
+          }
+        });
+
+      } catch (error) {
+        console.error('Chart error:', error);
+        document.getElementById('chartError').textContent = `Chart error: ${error.message}`;
+      }
+    }
+  </script>
+</body>
+</html>

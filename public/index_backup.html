@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Price Viewer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; }
+    .chart-container { margin-top: 30px; }
+    input, button { padding: 8px; font-size: 16px; }
+    button { cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Stock Price Viewer</h1>
+  <div>
+    <input type="text" id="symbolInput" placeholder="Enter stock symbol (e.g. TSLA)">
+    <button id="fetchBtn">Get Stock Data</button>
+  </div>
+  <div style="margin-top: 15px;">
+    <label for="dateRange">Date Range: </label>
+    <select id="dateRange">
+      <option value="30">Last 30 Days</option>
+      <option value="90">Last 90 Days</option>
+      <option value="180">Last 6 Months</option>
+      <option value="365">Last Year</option>
+      <option value="0">All Data</option>
+    </select>
+  </div>
+  <div class="chart-container">
+    <canvas id="stockChart"></canvas>
+    <p id="chartError" style="color: red; margin-top: 10px;"></p>
+  </div>
+
+  <script>
+    const ctx = document.getElementById('stockChart').getContext('2d');
+    let stockChart;
+
+    // Cache stock data in localStorage
+    function getCachedStockData(symbol) {
+      const cached = localStorage.getItem(`stockData_${symbol}`);
+      return cached ? JSON.parse(cached) : null;
+    }
+
+    function cacheStockData(symbol, data) {
+      localStorage.setItem(`stockData_${symbol}`, JSON.stringify({
+        data,
+        timestamp: new Date().getTime()
+      }));
+    }
+
+    function isCacheValid(cachedData, maxAgeHours = 24) {
+      if (!cachedData || !cachedData.timestamp) return false;
+      const ageHours = (new Date().getTime() - cachedData.timestamp) / (1000 * 60 * 60);
+      return ageHours < maxAgeHours;
+    }
+
+    document.getElementById('fetchBtn').addEventListener('click', async () => {
+      const symbol = document.getElementById('symbolInput').value.trim().toUpperCase();
+      if (!symbol) return alert('Please enter a stock symbol');
+      
+      try {
+        // Show loading state
+        const btn = document.getElementById('fetchBtn');
+        btn.disabled = true;
+        btn.textContent = 'Loading...';
+
+        // Check cache first
+        const cachedData = getCachedStockData(symbol);
+        if (cachedData && isCacheValid(cachedData)) {
+          console.log('Using cached data for:', symbol);
+          updateChart(cachedData.data);
+          document.getElementById('chartError').textContent = '';
+          btn.disabled = false;
+          btn.textContent = 'Get Stock Data';
+          return;
+        }
+
+        console.log('Fetching fresh data for:', symbol);
+        const response = await fetch(`/api/stock/${symbol}`);
+        if (!response.ok) {
+          if (response.status === 429) {
+            throw new Error('Please wait 1 minute between requests (API limit)');
+          }
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        // Add delay to prevent rapid consecutive requests
+        await new Promise(resolve => setTimeout(resolve, 15000));
+        
+        const result = await response.json();
+        console.log('API Response:', result);
+        
+        const data = result.data || result;
+        
+        if (!data || !data.closingPrices || !Array.isArray(data.closingPrices)) {
+          console.error('Invalid data structure - closingPrices:', data?.closingPrices);
+          throw new Error(data?.error || 'Invalid data format from server');
+        }
+
+        if (!data.symbol || typeof data.symbol !== 'string') {
+          console.error('Invalid symbol in response:', data?.symbol);
+          throw new Error('Invalid symbol in response');
+        }
+
+        // Validate closing prices structure
+        const invalidItems = data.closingPrices.filter(item => 
+          !item.date || !item.close || isNaN(item.close)
+        );
+        if (invalidItems.length > 0) {
+          console.error('Invalid price data items:', invalidItems.slice(0, 3));
+          throw new Error(`Found ${invalidItems.length} invalid data points`);
+        }
+
+        console.log('API response:', data);
+        if (!data.closingPrices || !Array.isArray(data.closingPrices)) {
+          throw new Error('Invalid data format: missing closingPrices array');
+        }
+        updateChart(data);
+        cacheStockData(symbol, data);
+        document.getElementById('chartError').textContent = '';
+      } catch (error) {
+        console.error('Error:', error);
+        document.getElementById('chartError').textContent = error.message;
+        if (stockChart) {
+          stockChart.destroy();
+          stockChart = null;
+        }
+      } finally {
+        const btn = document.getElementById('fetchBtn');
+        btn.disabled = false;
+        btn.textContent = 'Get Stock Data';
+      }
+      });
+    });
+
+    function calculateSMA(prices, dates, windowSize = 20) {
+      const sma = [];
+      for (let i = windowSize - 1; i < prices.length; i++) {
+        const sum = prices.slice(i - windowSize + 1, i + 1).reduce((a, b) => a + b, 0);
+        sma.push({ date: dates[i], value: sum / windowSize });
+      }
+      return sma;
+    }
+
+    function updateChart(data) {
+      console.log('Starting chart update with data:', data);
+      
+      const dateRange = parseInt(document.getElementById('dateRange').value);
+      console.log('Selected date range:', dateRange);
+      
+      let chartData = data.closingPrices;
+      console.log('Original data points:', chartData.length);
+      
+      if (dateRange > 0) {
+        chartData = chartData.slice(-dateRange);
+        console.log('Sliced to last', dateRange, 'days:', chartData.length);
+      } else if (chartData.length > 250) {
+        chartData = chartData.slice(-250);
+        console.log('Limited to 250 most recent points');
+      }
+
+      const dates = chartData.map(item => item.date);
+      const closes = chartData.map(item => item.close);
+      console.log('Final chart data points:', dates.length);
+      
+      try {
+        console.log('Calculating SMA...');
+        const sma20 = calculateSMA(closes, dates, 20);
+        console.log('SMA calculation complete');
+
+      if (stockChart) {
+        console.log('Destroying previous chart instance');
+        stockChart.destroy();
+      }
+
+      console.log('Creating new chart instance');
+      stockChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: dates,
+          datasets: [
+            {
+              label: `${data.symbol} Closing Price`,
+              data: closes,
+              borderColor: 'rgb(75, 192, 192)',
+              tension: 0.1
+            },
+            {
+              label: '20-Day SMA',
+              data: [...Array(dates.length - sma20.length).fill(null), ...sma20.map(item => item.value)],
+              borderColor: 'rgb(255, 99, 132)',
+              tension: 0.1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: {
+              title: { display: true, text: 'Date' }
+            },
+            y: {
+              title: { display: true, text: 'Price ($)' }
+            }
+          }
+        }
+      });
+      console.log('Chart successfully created');
+      } catch (error) {
+        console.error('Chart rendering error:', error);
+        console.error('Chart config at time of error:', {
+          labels: dates,
+          datasets: [{
+            label: `${data.symbol} Closing Price`,
+            data: closes,
+            borderColor: 'rgb(75, 192, 192)'
+          }, {
+            label: '20-Day SMA',
+            data: [...Array(dates.length - sma20.length).fill(null), ...sma20.map(item => item.value)],
+            borderColor: 'rgb(255, 99, 132)'
+          }]
+        });
+        throw new Error('Failed to render chart: ' + error.message);
+      }
+    }
+  </script>
+</body>
+</html>
