@@ -142,15 +142,11 @@
     <p id="chartError" style="color: red; margin-top: 10px;"></p>
     <p id="rateLimitInfo" style="color: #666; font-size: 0.9em; margin-top: 5px;"></p>
   </div>
-  <div class="chart-container" style="height: 30vh; min-height: 200px; margin-top: 20px;">
-    <canvas id="rsiChart"></canvas>
-  </div>
+
 
   <script>
     const priceCtx = document.getElementById('stockChart').getContext('2d');
-    const rsiCtx = document.getElementById('rsiChart').getContext('2d');
     let stockChart;
-    let rsiChart;
 
     // Cache stock data in localStorage
     function getCachedStockData(symbol) {
@@ -310,44 +306,7 @@
       return sma;
     }
 
-    function calculateRSI(prices, window = 14) {
-      const rsi = [];
-      let avgGain = 0;
-      let avgLoss = 0;
-      
-      // Calculate initial average gains/losses
-      for (let i = 1; i <= window; i++) {
-        const change = prices[i] - prices[i-1];
-        if (change > 0) {
-          avgGain += change;
-        } else {
-          avgLoss += Math.abs(change);
-        }
-      }
-      avgGain /= window;
-      avgLoss /= window;
-      
-      // Calculate subsequent RSI values
-      for (let i = window + 1; i < prices.length; i++) {
-        const change = prices[i] - prices[i-1];
-        let currentGain = 0;
-        let currentLoss = 0;
-        
-        if (change > 0) {
-          currentGain = change;
-        } else {
-          currentLoss = Math.abs(change);
-        }
-        
-        avgGain = (avgGain * (window - 1) + currentGain) / window;
-        avgLoss = (avgLoss * (window - 1) + currentLoss) / window;
-        
-        const relativeStrength = avgLoss === 0 ? 100 : avgGain / avgLoss;
-        rsi.push(100 - (100 / (1 + relativeStrength)));
-      }
-      
-      return rsi;
-    }
+
 
     function updateChart(data) {
       console.log('Chart data received:', JSON.stringify(data, null, 2));
@@ -491,12 +450,9 @@
         });
 
         // Add technical indicators
+        const sma5 = calculateSMA(closes, dates, 5);
         const sma20 = calculateSMA(closes, dates, 20);
-        const sma50 = calculateSMA(closes, dates, 50);
-        const rsiValues = calculateRSI(closes);
-        const rsiDates = dates.slice(14); // RSI starts after first 14 periods
-        
-        // Update price chart (without RSI)
+        // Update price chart
         stockChart.data.datasets.push(
           {
             label: '20-Day SMA',
@@ -506,8 +462,8 @@
             borderDash: [5, 5]
           },
           {
-            label: '50-Day SMA',
-            data: [...Array(dates.length - sma50.length).fill(null), ...sma50.map(item => item.value)],
+            label: '5-Day SMA',
+            data: [...Array(dates.length - sma5.length).fill(null), ...sma5.map(item => item.value)],
             borderColor: 'rgb(34, 139, 34)',
             tension: 0.1,
             borderDash: [5, 5]
@@ -515,65 +471,6 @@
         );
         stockChart.update();
 
-        // Create RSI chart
-        if (rsiChart) rsiChart.destroy();
-        rsiChart = new Chart(rsiCtx, {
-          type: 'line',
-          data: {
-            labels: rsiDates,
-            datasets: [{
-              label: 'RSI (14)',
-              data: rsiValues,
-              borderColor: 'rgb(128, 0, 128)',
-              borderWidth: 2,
-              pointRadius: 0
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: {
-                position: 'top'
-              },
-              tooltip: {
-                mode: 'index',
-                intersect: false
-              }
-            },
-            scales: {
-              x: {
-                grid: {
-                  display: false
-                },
-                ticks: {
-                  font: {
-                    size: 12
-                  }
-                }
-              },
-              y: {
-                min: 0,
-                max: 100,
-                ticks: {
-                  stepSize: 20,
-                  callback: function(value) {
-                    return value;
-                  }
-                },
-                grid: {
-                  color: 'rgba(0,0,0,0.05)'
-                }
-              }
-            },
-            elements: {
-              point: {
-                radius: 0,
-                hoverRadius: 6
-              }
-            }
-          }
-        });
 
       } catch (error) {
         console.error('Chart error:', error);
