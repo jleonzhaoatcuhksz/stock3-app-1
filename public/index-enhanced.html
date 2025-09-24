@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- [Previous head content remains the same] -->
+  <style>
+    /* [Previous styles remain the same] */
+    
+    .sma-line {
+      border-width: 3px !important;
+    }
+    .golden-cross {
+      background-color: #00ff00 !important;
+      border: 2px solid #000 !important;
+      border-radius: 50% !important;
+      width: 12px !important;
+      height: 12px !important;
+    }
+    .death-cross {
+      background-color: #ff0000 !important;
+      border: 2px solid #000 !important;
+      border-radius: 50% !important;
+      width: 12px !important;
+      height: 12px !important;
+    }
+  </style>
+</head>
+<body>
+  <!-- [Previous body content remains the same until the script section] -->
+  
+  <script>
+    // [Previous script content remains the same until updateChart function]
+
+    function updateChart(data) {
+      // [Previous validation code remains the same]
+
+      // Create chart with enhanced styling
+      stockChart = new Chart(priceCtx, {
+        type: 'line',
+        data: {
+          labels: dates,
+          datasets: [
+            {
+              label: `${data.symbol} Closing Price`,
+              data: closes,
+              borderColor: 'rgb(54, 162, 235)',
+              tension: 0.1
+            },
+            {
+              label: '5-Day SMA',
+              data: sma5Data,
+              borderColor: 'rgb(0, 200, 0)',
+              borderWidth: 3,
+              borderDash: [5, 5],
+              tension: 0,
+              className: 'sma-line'
+            },
+            {
+              label: '20-Day SMA',
+              data: sma20Data,
+              borderColor: 'rgb(200, 0, 0)',
+              borderWidth: 3,
+              borderDash: [5, 5],
+              tension: 0,
+              className: 'sma-line'
+            }
+          ]
+        },
+        options: {
+          // [Previous options remain the same]
+        }
+      });
+
+      // Add enhanced crossover markers
+      const goldenCrossData = Array(dates.length).fill(null);
+      const deathCrossData = Array(dates.length).fill(null);
+      
+      crossoverResults.goldenCrosses.forEach(cross => {
+        const index = dates.indexOf(cross.date);
+        if (index !== -1) goldenCrossData[index] = cross.price;
+      });
+      
+      crossoverResults.deathCrosses.forEach(cross => {
+        const index = dates.indexOf(cross.date);
+        if (index !== -1) deathCrossData[index] = cross.price;
+      });
+
+      stockChart.data.datasets.push(
+        {
+          label: 'Golden Cross',
+          data: goldenCrossData,
+          pointBackgroundColor: 'rgba(0, 255, 0, 1)',
+          pointBorderColor: '#000',
+          pointBorderWidth: 2,
+          pointRadius: 10,
+          pointHoverRadius: 12,
+          showLine: false,
+          className: 'golden-cross'
+        },
+        {
+          label: 'Death Cross',
+          data: deathCrossData,
+          pointBackgroundColor: 'rgba(255, 0, 0, 1)',
+          pointBorderColor: '#000',
+          pointBorderWidth: 2,
+          pointRadius: 10,
+          pointHoverRadius: 12,
+          showLine: false,
+          className: 'death-cross'
+        }
+      );
+
+      stockChart.update();
+      displayCrossoverAnalysis(crossoverResults);
+    }
+  </script>
+</body>
+</html>

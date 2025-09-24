@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>SMA Debug</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <canvas id="chart" width="800" height="400"></canvas>
+  
+  <script>
+    // Hardcoded sample data
+    const sampleData = {
+      dates: ['2023-01-01', '2023-01-02', '2023-01-03', '2023-01-04', '2023-01-05', 
+              '2023-01-06', '2023-01-07', '2023-01-08', '2023-01-09', '2023-01-10'],
+      prices: [100, 102, 105, 103, 107, 110, 108, 112, 115, 113]
+    };
+
+    // Simple SMA calculation
+    function calculateSMA(prices, window) {
+      const sma = [];
+      for (let i = window-1; i < prices.length; i++) {
+        const sum = prices.slice(i-window+1, i+1).reduce((a,b) => a + b, 0);
+        sma.push(sum / window);
+      }
+      return sma;
+    }
+
+    // Create chart with guaranteed visible elements
+    const ctx = document.getElementById('chart').getContext('2d');
+    const sma5 = calculateSMA(sampleData.prices, 5);
+    const sma20 = calculateSMA(sampleData.prices, 2); // Smaller window for demo
+    
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: sampleData.dates,
+        datasets: [
+          {
+            label: 'Price',
+            data: sampleData.prices,
+            borderColor: 'blue',
+            tension: 0
+          },
+          {
+            label: '5-Day SMA',
+            data: [null, null, null, null, ...sma5],
+            borderColor: 'lime',
+            backgroundColor: 'rgba(0,255,0,0.1)',
+            borderWidth: 4,
+            borderDash: [5,5],
+            fill: false,
+            tension: 0,
+            pointRadius: 0
+          },
+          {
+            label: '20-Day SMA',
+            data: [null, ...sma20],
+            borderColor: 'red',
+            backgroundColor: 'rgba(255,0,0,0.1)',
+            borderWidth: 4,
+            borderDash: [5,5],
+            fill: false,
+            tension: 0,
+            pointRadius: 0
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        interaction: {
+          intersect: false,
+          mode: 'index'
+        },
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: {
+              font: {
+                size: 14
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            grid: {
+              display: false
+            }
+          },
+          y: {
+            beginAtZero: false
+          }
+        }
+      }
+    });
+
+    console.log('Chart datasets:', chart.data.datasets);
+    console.log('5-Day SMA values:', chart.data.datasets[1].data);
+    console.log('20-Day SMA values:', chart.data.datasets[2].data);
+
+    console.log('Price data:', sampleData.prices);
+    console.log('5-Day SMA:', sma5);
+    console.log('20-Day SMA:', sma20);
+  </script>
+</body>
+</html>

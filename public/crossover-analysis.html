@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Stock Crossover Analysis</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    .chart-container {
+      width: 100%;
+      height: 60vh;
+      min-height: 500px;
+    }
+    .sma-line {
+      border-width: 3px !important;
+    }
+    .golden-cross {
+      background-color: #00ff00 !important;
+      border: 2px solid #000 !important;
+      border-radius: 50% !important;
+    }
+    .death-cross {
+      background-color: #ff0000 !important;
+      border: 2px solid #000 !important;
+      border-radius: 50% !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="chart-container">
+    <canvas id="stockChart"></canvas>
+  </div>
+
+  <script>
+    const ctx = document.getElementById('stockChart').getContext('2d');
+    let chart;
+
+    // Fetch real stock data from API
+    async function fetchStockData(symbol) {
+      try {
+        const response = await fetch(`/api/stock/${symbol}`);
+        if (!response.ok) throw new Error('API request failed');
+        return await response.json();
+      } catch (error) {
+        console.error('Error fetching stock data:', error);
+        return null;
+      }
+    }
+    
+    // Initialize with real data
+    fetchStockData('AAPL').then(data => {
+      if (data) updateChart(data);
+    });
+
+    function calculateSMA(prices, window) {
+      const sma = [];
+      for (let i = window-1; i < prices.length; i++) {
+        const sum = prices.slice(i-window+1, i+1).reduce((a,b) => a + b, 0);
+        sma.push(sum / window);
+      }
+      return sma;
+    }
+
+    function updateChart(data) {
+      // Validate data
+      if (!data?.closingPrices?.length) {
+        console.error('Invalid data format');
+        return;
+      }
+      
+      const dates = data.closingPrices.map(d => d.date);
+      const closes = data.closingPrices.map(d => d.close);
+      
+      // Calculate crossovers
+      const { sma5, sma20, crossovers } = calculateCrossovers(closes, dates);
+      
+      // Calculate SMAs
+      const sma5Values = calculateSMA(closes, 5);
+      const sma20Values = calculateSMA(closes, 20);
+      
+      // Create datasets
+      const datasets = [
+        {
+          label: `${data.symbol} Price`,
+          data: closes,
+          borderColor: 'rgb(54, 162, 235)'
+        },
+        {
+          label: '5-Day SMA',
+          data: [...Array(dates.length - sma5Values.length).fill(null), ...sma5Values],
+          borderColor: 'rgb(0, 200, 0)',
+          borderWidth: 3,
+          borderDash: [5,5],
+          className: 'sma-line'
+        },
+        {
+          label: '20-Day SMA',
+          data: [...Array(dates.length - sma20Values.length).fill(null), ...sma20Values],
+          borderColor: 'rgb(200, 0, 0)',
+          borderWidth: 3,
+          borderDash: [5,5],
+          className: 'sma-line'
+        }
+      ];
+
+      // Add crossover markers
+      const goldenCrosses = crossovers.filter(c => c.type === 'golden');
+      const deathCrosses = crossovers.filter(c => c.type === 'death');
+      
+      // Create chart
+      chart = new Chart(ctx, {
+        data: {
+          labels: dates,
+          datasets: [
+            {
+              label: `${data.symbol} Price`,
+              data: closes,
+              borderColor: 'rgb(54, 162, 235)'
+            },
+            {
+              label: '5-Day SMA',
+              data: sma5,
+              borderColor: 'rgb(0, 200, 0)',
+              borderWidth: 3,
+              borderDash: [5,5],
+              className: 'sma-line'
+            },
+            {
+              label: '20-Day SMA',
+              data: sma20,
+              borderColor: 'rgb(200, 0, 0)',
+              borderWidth: 3,
+              borderDash: [5,5],
+              className: 'sma-line'
+            },
+            {
+              label: 'Golden Cross',
+              data: goldenCrosses.map(c => ({x: c.date, y: c.price})),
+              pointBackgroundColor: 'rgba(0, 255, 0, 1)',
+              pointBorderColor: '#000',
+              pointRadius: 8,
+              showLine: false,
+              className: 'golden-cross'
+            },
+            {
+              label: 'Death Cross',
+              data: deathCrosses.map(c => ({x: c.date, y: c.price})),
+              pointBackgroundColor: 'rgba(255, 0, 0, 1)',
+              pointBorderColor: '#000',
+              pointRadius: 8,
+              showLine: false,
+              className: 'death-cross'
+            }
+          ]
+        },
+        type: 'line',
+        data: {
+          labels: dates,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: {
+              position: 'top'
+            }
+          }
+        }
+      });
+    }
+
+    // Initialize with sample data
+    updateChart(sampleData);
+  </script>
+</body>
+</html>
