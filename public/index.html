@@ -137,6 +137,36 @@
       <option value="0">All Data</option>
     </select>
   </div>
+  
+  <div id="crossoverSection" style="margin-top: 30px; display: none;">
+    <h2>Crossover Analysis</h2>
+    <div style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 15px;">
+      <table id="crossoverMatrix" style="width: 100%; border-collapse: collapse;">
+        <thead>
+          <tr style="background-color: #f5f5f5;">
+            <th style="padding: 10px; text-align: left;">Date</th>
+            <th style="padding: 10px; text-align: right;">Price</th>
+            <th style="padding: 10px; text-align: right;">5-Day SMA</th>
+            <th style="padding: 10px; text-align: right;">20-Day SMA</th>
+            <th style="padding: 10px; text-align: right;">Difference</th>
+            <th style="padding: 10px; text-align: center;">Cross Type</th>
+          </tr>
+        </thead>
+        <tbody id="crossoverBody"></tbody>
+      </table>
+    </div>
+    <div style="display: flex; gap: 20px; margin-top: 20px;">
+      <div style="flex: 1; border: 1px solid #ddd; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+        <h3 style="margin-top: 0;">Golden Cross Points</h3>
+        <ul id="goldenCrossList" style="max-height: 200px; overflow-y: auto; padding-left: 20px;"></ul>
+      </div>
+      <div style="flex: 1; border: 1px solid #ddd; border-radius: 8px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+        <h3 style="margin-top: 0;">Death Cross Points</h3>
+        <ul id="deathCrossList" style="max-height: 200px; overflow-y: auto; padding-left: 20px;"></ul>
+      </div>
+    </div>
+  </div>
+
   <div class="chart-container">
     <canvas id="stockChart"></canvas>
     <p id="chartError" style="color: red; margin-top: 10px;"></p>
@@ -297,6 +327,204 @@
       }
     });
 
+    // Define all crossover analysis functions first
+    function analyzeCrossovers(prices, dates, sma5, sma20) {
+      const crossoverData = [];
+      const goldenCrosses = [];
+      const deathCrosses = [];
+      
+      const minLength = Math.min(sma5.length, sma20.length);
+      for (let i = 0; i < minLength; i++) {
+        const sma5Val = sma5[i]?.value ?? sma5[i];
+        const sma20Val = sma20[i]?.value ?? sma20[i];
+        
+        if (typeof sma5Val !== 'number' || typeof sma20Val !== 'number') continue;
+
+        const diff = sma5Val - sma20Val;
+        const price = prices[i + 19];
+        
+        const crossoverPoint = {
+          date: sma5[i].date,
+          price: price,
+          sma5: sma5Val,
+          sma20: sma20Val,
+          diff: diff,
+          type: null
+        };
+
+        if (i > 0) {
+          const prevDiff = sma5[i-1].value - sma20[i-1].value;
+          if (prevDiff < 0 && diff > 0) {
+            crossoverPoint.type = 'golden';
+            goldenCrosses.push(crossoverPoint);
+          } else if (prevDiff > 0 && diff < 0) {
+            crossoverPoint.type = 'death';
+            deathCrosses.push(crossoverPoint);
+          }
+        }
+        crossoverData.push(crossoverPoint);
+      }
+      return { crossoverData, goldenCrosses, deathCrosses };
+    }
+
+    function displayCrossoverAnalysis(data) {
+      const crossoverBody = document.getElementById('crossoverBody');
+      const goldenCrossList = document.getElementById('goldenCrossList');
+      const deathCrossList = document.getElementById('deathCrossList');
+      
+      crossoverBody.innerHTML = '';
+      goldenCrossList.innerHTML = '';
+      deathCrossList.innerHTML = '';
+      
+      data.crossoverData.forEach(point => {
+        const row = document.createElement('tr');
+        row.style.borderBottom = '1px solid #eee';
+        
+        const cells = [
+          point.date,
+          `$${point.price.toFixed(2)}`,
+          `$${point.sma5.toFixed(2)}`,
+          `$${point.sma20.toFixed(2)}`,
+          point.diff.toFixed(4),
+          point.type ? 
+            `<span style="color: ${point.type === 'golden' ? 'green' : 'red'}; font-weight: bold;">
+              ${point.type === 'golden' ? 'Golden Cross' : 'Death Cross'}
+            </span>` : ''
+        ];
+        
+        cells.forEach((text, i) => {
+          const cell = document.createElement('td');
+          cell.style.padding = '8px';
+          cell.style.textAlign = i === 0 ? 'left' : 'right';
+          if (i === 5) cell.style.textAlign = 'center';
+          cell.innerHTML = text;
+          row.appendChild(cell);
+        });
+        crossoverBody.appendChild(row);
+      });
+      
+      data.goldenCrosses.forEach(cross => {
+        const item = document.createElement('li');
+        item.innerHTML = `
+          <strong>${cross.date}</strong>: 
+          5-Day SMA ($${cross.sma5.toFixed(2)}) crossed above 20-Day SMA ($${cross.sma20.toFixed(2)})
+        `;
+        goldenCrossList.appendChild(item);
+      });
+      
+      data.deathCrosses.forEach(cross => {
+        const item = document.createElement('li');
+        item.innerHTML = `
+          <strong>${cross.date}</strong>: 
+          5-Day SMA ($${cross.sma5.toFixed(2)}) crossed below 20-Day SMA ($${cross.sma20.toFixed(2)})
+        `;
+        deathCrossList.appendChild(item);
+      });
+      
+      document.getElementById('crossoverSection').style.display = 'block';
+    }
+
+    function markCrossPointsOnChart(chart, goldenCrosses, deathCrosses) {
+      // Remove existing crossover markers
+      chart.data.datasets = chart.data.datasets.filter(ds => 
+        ds.label !== 'Golden Cross' && ds.label !== 'Death Cross'
+      );
+
+      // Calculate exact crossover points by interpolation
+      const goldenCrossPoints = goldenCrosses.map(cross => {
+        const index = chart.data.labels.indexOf(cross.date);
+        if (index === -1) return null;
+        
+        // Get the SMA values at crossover
+        const sma5 = cross.sma5;
+        const sma20 = cross.sma20;
+        
+        // Calculate exact price at crossover (average of SMAs)
+        const crossoverPrice = (sma5 + sma20) / 2;
+        
+        return {
+          x: cross.date,
+          y: crossoverPrice,
+          point: cross
+        };
+      }).filter(Boolean);
+
+      const deathCrossPoints = deathCrosses.map(cross => {
+        const index = chart.data.labels.indexOf(cross.date);
+        if (index === -1) return null;
+        
+        const sma5 = cross.sma5;
+        const sma20 = cross.sma20;
+        const crossoverPrice = (sma5 + sma20) / 2;
+        
+        return {
+          x: cross.date,
+          y: crossoverPrice,
+          point: cross
+        };
+      }).filter(Boolean);
+
+      // Add golden cross markers
+      chart.data.datasets.push({
+        label: 'Golden Cross',
+        data: goldenCrossPoints,
+        backgroundColor: 'rgba(0, 128, 0, 0.8)',
+        borderColor: 'rgba(0, 128, 0, 0.8)',
+        pointBackgroundColor: 'rgba(0, 128, 0, 0.8)',
+        pointBorderColor: '#fff',
+        pointRadius: 8,
+        pointHoverRadius: 12,
+        pointStyle: 'crossRot',
+        borderWidth: 2,
+        showLine: false,
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const point = ctx.raw.point;
+              return [
+                `Golden Cross on ${point.date}`,
+                `Price: $${point.price.toFixed(2)}`,
+                `5-Day SMA: $${point.sma5.toFixed(2)}`,
+                `20-Day SMA: $${point.sma20.toFixed(2)}`,
+                `Difference: ${point.diff.toFixed(4)}`
+              ];
+            }
+          }
+        }
+      });
+
+      // Add death cross markers
+      chart.data.datasets.push({
+        label: 'Death Cross',
+        data: deathCrossPoints,
+        backgroundColor: 'rgba(200, 0, 0, 0.8)',
+        borderColor: 'rgba(200, 0, 0, 0.8)',
+        pointBackgroundColor: 'rgba(200, 0, 0, 0.8)',
+        pointBorderColor: '#fff',
+        pointRadius: 8,
+        pointHoverRadius: 12,
+        pointStyle: 'crossRot',
+        borderWidth: 2,
+        showLine: false,
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const point = ctx.raw.point;
+              return [
+                `Death Cross on ${point.date}`,
+                `Price: $${point.price.toFixed(2)}`,
+                `5-Day SMA: $${point.sma5.toFixed(2)}`,
+                `20-Day SMA: $${point.sma20.toFixed(2)}`,
+                `Difference: ${point.diff.toFixed(4)}`
+              ];
+            }
+          }
+        }
+      });
+
+      chart.update();
+    }
+
     function calculateSMA(prices, dates, windowSize = 20) {
       const sma = [];
       for (let i = windowSize - 1; i < prices.length; i++) {
@@ -307,6 +535,90 @@
     }
 
 
+
+    function markCrossPointsOnChart(chart, goldenCrosses, deathCrosses) {
+      // First remove any existing crossover markers
+      chart.data.datasets = chart.data.datasets.filter(ds => 
+        ds.label !== 'Golden Cross' && ds.label !== 'Death Cross'
+      );
+
+      // Create golden crosses dataset
+      const goldenCrossData = Array(chart.data.labels.length).fill(null);
+      goldenCrosses.forEach(cross => {
+        const index = chart.data.labels.indexOf(cross.date);
+        if (index !== -1) {
+          goldenCrossData[index] = cross.price;
+        }
+      });
+      
+      // Create death crosses dataset
+      const deathCrossData = Array(chart.data.labels.length).fill(null);
+      deathCrosses.forEach(cross => {
+        const index = chart.data.labels.indexOf(cross.date);
+        if (index !== -1) {
+          deathCrossData[index] = cross.price;
+        }
+      });
+      
+      // Add cross-shaped markers with tooltips
+      const goldenCrossDataset = {
+        label: 'Golden Cross',
+        data: goldenCrossData,
+        backgroundColor: 'rgb(0, 128, 0)',
+        borderColor: 'rgb(0, 128, 0)',
+        pointBackgroundColor: 'rgb(0, 128, 0)',
+        pointBorderColor: 'rgb(0, 128, 0)',
+        pointRadius: 8,
+        pointHoverRadius: 10,
+        pointStyle: 'crossRot',
+        borderWidth: 2,
+        showLine: false,
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const point = goldenCrosses.find(p => p.date === chart.data.labels[ctx.dataIndex]);
+              return point ? [
+                `Golden Cross on ${point.date}`,
+                `Price: $${point.price.toFixed(2)}`,
+                `5-Day SMA: $${point.sma5.toFixed(2)}`,
+                `20-Day SMA: $${point.sma20.toFixed(2)}`
+              ] : [];
+            }
+          }
+        }
+      };
+
+      const deathCrossDataset = {
+        label: 'Death Cross',
+        data: deathCrossData,
+        backgroundColor: 'rgb(200, 0, 0)',
+        borderColor: 'rgb(200, 0, 0)',
+        pointBackgroundColor: 'rgb(200, 0, 0)',
+        pointBorderColor: 'rgb(200, 0, 0)',
+        pointRadius: 8,
+        pointHoverRadius: 10,
+        pointStyle: 'crossRot',
+        borderWidth: 2,
+        showLine: false,
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const point = deathCrosses.find(p => p.date === chart.data.labels[ctx.dataIndex]);
+              return point ? [
+                `Death Cross on ${point.date}`,
+                `Price: $${point.price.toFixed(2)}`,
+                `5-Day SMA: $${point.sma5.toFixed(2)}`,
+                `20-Day SMA: $${point.sma20.toFixed(2)}`
+              ] : [];
+            }
+          }
+        }
+      };
+
+      // Add the new datasets
+      chart.data.datasets.push(goldenCrossDataset, deathCrossDataset);
+      chart.update();
+    }
 
     function updateChart(data) {
       console.log('Chart data received:', JSON.stringify(data, null, 2));
@@ -452,7 +764,8 @@
         // Add technical indicators
         const sma5 = calculateSMA(closes, dates, 5);
         const sma20 = calculateSMA(closes, dates, 20);
-        // Update price chart
+        
+        // Update price chart with SMAs
         stockChart.data.datasets.push(
           {
             label: '20-Day SMA',
@@ -469,6 +782,12 @@
             borderDash: [5, 5]
           }
         );
+        
+        // Analyze and display crossovers
+        const crossoverResults = analyzeCrossovers(closes, dates, sma5, sma20);
+        displayCrossoverAnalysis(crossoverResults);
+        markCrossPointsOnChart(stockChart, crossoverResults.goldenCrosses, crossoverResults.deathCrosses);
+        
         stockChart.update();
 
 
